@@ -42,10 +42,10 @@ jobs:
         run: |
           Compress-Archive target/release/snarkos.exe aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
 
-      - name: Release
-        uses: softprops/action-gh-release@v1
+      - name: Upload
+        uses: actions/upload-artifact@v2
         with:
-          files: |
+          name: |
             aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: |
+            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
