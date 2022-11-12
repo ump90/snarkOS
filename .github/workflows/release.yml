@@ -1,8 +1,6 @@
 name: snarkOS Release
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_dispatch:
 
 env:
   RUST_BACKTRACE: 1
