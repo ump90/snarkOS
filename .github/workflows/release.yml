@@ -49,3 +49,39 @@ jobs:
             aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
           path: |
             aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-pc-windows-msvc.zip
+  ubuntu:
+    name: Ubuntu
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+
+      - name: Build snarkOS
+        run: |
+          cargo build --all --release && strip target/release/snarkos
+      - id: get_version
+        uses: battila7/get-version-action@v2
+
+      - name: Zip
+        run: |
+          mkdir tempdir
+          mv target/release/snarkos tempdir
+          cd tempdir
+          zip -r aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip snarkos
+          cd ..
+          mv tempdir/aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip .
+      - name: Upload
+        uses: actions/upload-artifact@v2
+        with:
+          name: |
+            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip
+          path: |
+            aleo-testnet1-${{ steps.get_version.outputs.version }}-x86_64-unknown-linux-gnu.zip
