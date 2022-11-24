@@ -47,7 +47,7 @@ Please note to run an Aleo Prover that is **competitive**, the machine will requ
 
 ### 2.2 Installation
 
-Before beginning, please ensure your machine has `Rust v1.64+` installed. Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
+Before beginning, please ensure your machine has `Rust v1.65+` installed. Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
 
 Start by cloning this Github repository:
 ```
@@ -113,7 +113,7 @@ APrivateKey1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ### 1. My node is unable to compile.
 
-- Ensure your machine has `Rust v1.64+` installed. Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
+- Ensure your machine has `Rust v1.65+` installed. Instructions to [install Rust can be found here.](https://www.rust-lang.org/tools/install)
 - If large errors appear during compilation, try running `cargo clean`.
 - Ensure `snarkOS` is started using `./run-client.sh` or `./run-prover.sh`.
 
@@ -162,9 +162,10 @@ USAGE:
 OPTIONS:
         --beacon <BEACON>          Specify this as a beacon, with the given account private key for this node
         --client <CLIENT>          Specify this as a client, with an optional account private key for this node
-        --connect <CONNECT>        Specify the IP address and port of a peer to connect to
+        --connect <CONNECT>        Specify the IP address and port of a peer to connect to [default: ]
         --dev <DEV>                Enables development mode, specify a unique ID for this node
     -h, --help                     Print help information
+        --logfile <LOGFILE>        Specify the path to the file where logs will be stored [default: /tmp/snarkos.log]
         --network <NETWORK>        Specify the network of this node [default: 3]
         --node <NODE>              Specify the IP address and port for the node server [default: 0.0.0.0:4133]
         --nodisplay                If the flag is set, the node will not render the display
