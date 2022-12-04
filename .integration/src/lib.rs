@@ -26,7 +26,7 @@ mod tests {
 
     type CurrentNetwork = Testnet3;
 
-    const TEST_BASE_URL: &str = "https://vm.aleo.org/api";
+    const TEST_BASE_URL: &str = "https://testnet3.blocks.aleo.org/phase2";
 
     #[test]
     #[traced_test]
@@ -34,7 +34,7 @@ mod tests {
         // Initialize the genesis block.
         let genesis = Block::<CurrentNetwork>::read_le(CurrentNetwork::genesis_bytes()).unwrap();
         // Initialize the ledger.
-        let ledger = Ledger::<_, ConsensusMemory<_>>::load(Some(genesis), None).unwrap();
+        let ledger = Ledger::<_, ConsensusMemory<_>>::load(genesis, None).unwrap();
         // Perform the sync.
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {

@@ -24,17 +24,7 @@ use snarkos_node_tcp::{
     protocols::{Disconnect, Handshake, Reading, Writing},
     P2P,
 };
-use snarkvm::prelude::{
-    Address,
-    Block,
-    CoinbasePuzzle,
-    ConsensusStorage,
-    EpochChallenge,
-    Network,
-    PrivateKey,
-    ProverSolution,
-    ViewKey,
-};
+use snarkvm::prelude::{Block, CoinbasePuzzle, ConsensusStorage, EpochChallenge, Header, Network, ProverSolution};
 
 use anyhow::Result;
 use colored::Colorize;
@@ -48,22 +38,21 @@ use std::{
         Arc,
     },
 };
-use time::OffsetDateTime;
 use tokio::task::JoinHandle;
 
 /// A prover is a full node, capable of producing proofs for consensus.
 #[derive(Clone)]
 pub struct Prover<N: Network, C: ConsensusStorage<N>> {
-    /// The account of the node.
-    account: Account<N>,
     /// The router of the node.
     router: Router<N>,
+    /// The genesis block.
+    genesis: Block<N>,
     /// The coinbase puzzle.
     coinbase_puzzle: CoinbasePuzzle<N>,
     /// The latest epoch challenge.
     latest_epoch_challenge: Arc<RwLock<Option<EpochChallenge<N>>>>,
-    /// The latest block.
-    latest_block: Arc<RwLock<Option<Block<N>>>>,
+    /// The latest block header.
+    latest_block_header: Arc<RwLock<Option<Header<N>>>>,
     /// The number of puzzle instances.
     puzzle_instances: Arc<AtomicU8>,
     /// The maximum number of puzzle instances.
@@ -82,13 +71,14 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         node_ip: SocketAddr,
         account: Account<N>,
         trusted_peers: &[SocketAddr],
+        genesis: Block<N>,
         dev: Option<u16>,
     ) -> Result<Self> {
         // Initialize the node router.
         let router = Router::new(
             node_ip,
             NodeType::Prover,
-            account.address(),
+            account,
             trusted_peers,
             Self::MAXIMUM_NUMBER_OF_PEERS as u16,
             dev.is_some(),
@@ -100,11 +90,11 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         let max_puzzle_instances = num_cpus::get().saturating_sub(2).clamp(1, 6);
         // Initialize the node.
         let node = Self {
-            account,
             router,
+            genesis,
             coinbase_puzzle,
             latest_epoch_challenge: Default::default(),
-            latest_block: Default::default(),
+            latest_block_header: Default::default(),
             puzzle_instances: Default::default(),
             max_puzzle_instances: u8::try_from(max_puzzle_instances)?,
             handles: Default::default(),
@@ -124,31 +114,6 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
 
 #[async_trait]
 impl<N: Network, C: ConsensusStorage<N>> NodeInterface<N> for Prover<N, C> {
-    /// Returns the node type.
-    fn node_type(&self) -> NodeType {
-        self.router.node_type()
-    }
-
-    /// Returns the account private key of the node.
-    fn private_key(&self) -> &PrivateKey<N> {
-        self.account.private_key()
-    }
-
-    /// Returns the account view key of the node.
-    fn view_key(&self) -> &ViewKey<N> {
-        self.account.view_key()
-    }
-
-    /// Returns the account address of the node.
-    fn address(&self) -> Address<N> {
-        self.account.address()
-    }
-
-    /// Returns `true` if the node is in development mode.
-    fn is_dev(&self) -> bool {
-        self.router.is_dev()
-    }
-
     /// Shuts down the node.
     async fn shut_down(&self) {
         info!("Shutting down...");
@@ -184,7 +149,7 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
         loop {
             // If the node is not connected to any peers, then skip this iteration.
             if self.router.number_of_connected_peers() == 0 {
-                warn!("Skipping an iteration of the coinbase puzzle (no connected peers)");
+                trace!("Skipping an iteration of the coinbase puzzle (no connected peers)");
                 tokio::time::sleep(Duration::from_secs(N::ANCHOR_TIME as u64)).await;
                 continue;
             }
@@ -200,29 +165,13 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             let latest_epoch_challenge = self.latest_epoch_challenge.read().clone();
             // Read the latest state.
             let latest_state = self
-                .latest_block
+                .latest_block_header
                 .read()
                 .as_ref()
-                .map(|block| (block.timestamp(), block.coinbase_target(), block.proof_target()));
-
-            // If the latest block timestamp exceeds a multiple of the anchor time, then skip this iteration.
-            if let Some((latest_timestamp, _, _)) = latest_state {
-                // Compute the elapsed time since the latest block.
-                let elapsed = OffsetDateTime::now_utc().unix_timestamp().saturating_sub(latest_timestamp);
-                // If the elapsed time exceeds a multiple of the anchor time, then skip this iteration.
-                if elapsed > N::ANCHOR_TIME as i64 * 6 {
-                    warn!("Skipping an iteration of the coinbase puzzle (latest block is stale)");
-                    // Send a "PuzzleRequest" to a beacon node.
-                    self.send_puzzle_request();
-                    // Sleep for `N::ANCHOR_TIME` seconds.
-                    tokio::time::sleep(Duration::from_secs(N::ANCHOR_TIME as u64)).await;
-                    continue;
-                }
-            }
+                .map(|header| (header.coinbase_target(), header.proof_target()));
 
             // If the latest epoch challenge and latest state exists, then proceed to generate a prover solution.
-            if let (Some(challenge), Some((_, coinbase_target, proof_target))) = (latest_epoch_challenge, latest_state)
-            {
+            if let (Some(challenge), Some((coinbase_target, proof_target))) = (latest_epoch_challenge, latest_state) {
                 // Execute the coinbase puzzle.
                 let prover = self.clone();
                 let result = tokio::task::spawn_blocking(move || {
@@ -289,8 +238,8 @@ impl<N: Network, C: ConsensusStorage<N>> Prover<N, C> {
             puzzle_commitment: prover_solution.commitment(),
             solution: Data::Object(prover_solution),
         });
-        // Propagate the "UnconfirmedSolution" to the network.
-        self.propagate(message, vec![]);
+        // Propagate the "UnconfirmedSolution" to the connected validators.
+        self.propagate_to_validators(message, vec![]);
     }
 
     /// Returns the current number of puzzle instances.

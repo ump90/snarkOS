@@ -14,102 +14,39 @@
 // You should have received a copy of the GNU General Public License
 // along with the snarkOS library. If not, see <https://www.gnu.org/licenses/>.
 
-use snarkos_node_messages::{ChallengeRequest, ChallengeResponse, Data, Message, MessageCodec, NodeType, Status};
-use snarkos_node_tcp::{protocols::Handshake, Config, Connection, Tcp, P2P};
+pub mod node;
+pub mod test_peer;
+
+use std::{env, str::FromStr};
+
+use snarkos_account::Account;
 use snarkvm::prelude::{Block, FromBytes, Network, Testnet3 as CurrentNetwork};
 
-use futures_util::{sink::SinkExt, TryStreamExt};
-use std::{
-    io,
-    net::{IpAddr, Ipv4Addr},
-};
-use tokio_util::codec::Framed;
-
-const ALEO_MAXIMUM_FORK_DEPTH: u32 = 4096;
-
-#[derive(Clone)]
-pub struct TestPeer {
-    tcp: Tcp,
-    node_type: NodeType,
+/// Returns a fixed account.
+pub fn sample_account() -> Account<CurrentNetwork> {
+    Account::<CurrentNetwork>::from_str("APrivateKey1zkp2oVPTci9kKcUprnbzMwq95Di1MQERpYBhEeqvkrDirK1").unwrap()
 }
 
-impl P2P for TestPeer {
-    fn tcp(&self) -> &Tcp {
-        &self.tcp
-    }
+/// Loads the current network's genesis block.
+pub fn sample_genesis_block() -> Block<CurrentNetwork> {
+    Block::<CurrentNetwork>::from_bytes_le(CurrentNetwork::genesis_bytes()).unwrap()
 }
 
-impl TestPeer {
-    pub async fn new(node_type: NodeType) -> Self {
-        let peer = Self {
-            tcp: Tcp::new(Config {
-                listener_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-                max_connections: 200,
-                ..Default::default()
-            })
-            .await
-            .expect("couldn't create test peer"),
-            node_type,
-        };
+/// Enables logging in tests.
+pub fn initialise_logger(level: u8) {
+    match level {
+        0 => env::set_var("RUST_LOG", "info"),
+        1 => env::set_var("RUST_LOG", "debug"),
+        2 | 3 => env::set_var("RUST_LOG", "trace"),
+        _ => env::set_var("RUST_LOG", "info"),
+    };
 
-        peer.enable_handshake().await;
-        //  client.enable_reading().await;
-        //  client.enable_writing().await;
-        //  client.enable_disconnect().await;
+    // Filter out undesirable logs.
+    let filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive("snarkos=off".parse().unwrap())
+        .add_directive("tokio_util=off".parse().unwrap())
+        .add_directive("mio=off".parse().unwrap());
 
-        peer
-    }
-
-    pub fn node_type(&self) -> NodeType {
-        self.node_type
-    }
-}
-
-#[async_trait::async_trait]
-impl Handshake for TestPeer {
-    async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
-        let local_ip = self.tcp().listening_addr().expect("listening address should be present");
-
-        let stream = self.borrow_stream(&mut conn);
-        let mut framed = Framed::new(stream, MessageCodec::<CurrentNetwork>::default());
-
-        // TODO (howardwu): Make this step more efficient (by not deserializing every time).
-        // Retrieve the genesis block header.
-        let genesis_header = *Block::<CurrentNetwork>::from_bytes_le(CurrentNetwork::genesis_bytes())
-            .expect("genesis block bytes should be valid")
-            .header();
-
-        // Send a challenge request to the peer.
-        let message = Message::<CurrentNetwork>::ChallengeRequest(ChallengeRequest {
-            version: Message::<CurrentNetwork>::VERSION,
-            fork_depth: ALEO_MAXIMUM_FORK_DEPTH,
-            node_type: self.node_type(),
-            status: Status::Peering,
-            listener_port: local_ip.port(),
-        });
-        framed.send(message).await?;
-
-        // Receive the challenge request.
-        let _challenge_request = framed.try_next().await?.unwrap();
-
-        // TODO(nkls): add assertions on the contents.
-
-        // Send the challenge response.
-        let message = Message::ChallengeResponse(ChallengeResponse { header: Data::Object(genesis_header) });
-        framed.send(message).await?;
-
-        // Receive the challenge response.
-        let Message::ChallengeResponse(challenge_response) = framed.try_next().await.unwrap().unwrap() else {
-            panic!("didn't get challenge response")
-        };
-
-        // Perform the deferred non-blocking deserialization of the block header.
-        let Ok(block_header) = challenge_response.header.deserialize().await else {
-            panic!("block header not present")
-        };
-
-        assert_eq!(block_header, genesis_header);
-
-        Ok(conn)
-    }
+    // Initialize tracing.
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_target(level == 3).try_init();
 }

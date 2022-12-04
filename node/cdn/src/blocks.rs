@@ -32,9 +32,6 @@ use std::{
 const BLOCKS_PER_FILE: u32 = 50;
 /// The supported network.
 const NETWORK_ID: u16 = 3;
-/// TODO (howardwu): Change this with Phase 3.
-/// The current phase.
-const PHASE: &str = "phase2";
 
 /// Loads blocks from a CDN into the ledger.
 ///
@@ -55,22 +52,28 @@ pub async fn sync_ledger_with_cdn<N: Network, C: ConsensusStorage<N>>(
     // If the sync failed, check the integrity of the ledger.
     if let Err((completed_height, error)) = &result {
         warn!("{error}");
-        debug!("Synced the ledger up to block {completed_height}");
 
-        // Retrieve the latest height, according to the ledger.
-        let node_height = cow_to_copied!(ledger.vm().block_store().heights().max().unwrap_or_default());
-        // Check the integrity of the latest height.
-        if &node_height != completed_height {
-            return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+        // If the sync made any progress, then check the integrity of the ledger.
+        if *completed_height != start_height {
+            debug!("Synced the ledger up to block {completed_height}");
+
+            // Retrieve the latest height, according to the ledger.
+            let node_height = cow_to_copied!(ledger.vm().block_store().heights().max().unwrap_or_default());
+            // Check the integrity of the latest height.
+            if &node_height != completed_height {
+                return Err((*completed_height, anyhow!("The ledger height does not match the last sync height")));
+            }
+
+            // Fetch the latest block from the ledger.
+            if let Err(err) = ledger.get_block(node_height) {
+                return Err((*completed_height, err));
+            }
         }
 
-        // Fetch the latest block from the ledger.
-        if let Err(err) = ledger.get_block(node_height) {
-            return Err((*completed_height, err));
-        }
+        Ok(*completed_height)
+    } else {
+        result
     }
-
-    result
 }
 
 /// Loads blocks from a CDN and process them with the given function.
@@ -89,7 +92,7 @@ pub async fn load_blocks<N: Network>(
     }
 
     // Fetch the CDN height.
-    let cdn_height = match cdn_height::<BLOCKS_PER_FILE>(base_url).await {
+    let cdn_height = match cdn_height::<BLOCKS_PER_FILE>().await {
         Ok(cdn_height) => cdn_height,
         Err(error) => return Err((start_height, error)),
     };
@@ -164,7 +167,7 @@ pub async fn load_blocks<N: Network>(
                         return std::future::ready(Ok(vec![])).await
                     }
                     // Prepare the URL.
-                    let blocks_url = format!("{base_url}/testnet3/blocks/{PHASE}/{start}.{end}.blocks");
+                    let blocks_url = format!("{base_url}/{start}.{end}.blocks");
                     // Fetch the blocks.
                     let blocks: Vec<Block<N>> = cdn_get(client, &blocks_url, &ctx).await?;
                     // Return the blocks.
@@ -251,14 +254,16 @@ pub async fn load_blocks<N: Network>(
 ///
 /// Note: This function decrements the tip by a few blocks, to ensure the
 /// tip is not on a block that is not yet available on the CDN.
-async fn cdn_height<const BLOCKS_PER_FILE: u32>(base_url: &str) -> Result<u32> {
+async fn cdn_height<const BLOCKS_PER_FILE: u32>() -> Result<u32> {
+    const BASE_URL: &str = "https://vm.aleo.org/api";
+
     // Create a request client.
     let client = match reqwest::Client::builder().build() {
         Ok(client) => client,
         Err(error) => bail!("Failed to create a CDN request client: {error}"),
     };
     // Prepare the URL.
-    let height_url = format!("{base_url}/testnet3/latest/height");
+    let height_url = format!("{BASE_URL}/testnet3/latest/height");
     // Send the request.
     let response = match client.get(height_url).send().await {
         Ok(response) => response,
@@ -377,7 +382,7 @@ mod tests {
 
     type CurrentNetwork = Testnet3;
 
-    const TEST_BASE_URL: &str = "https://vm.aleo.org/api";
+    const TEST_BASE_URL: &str = "https://testnet3.blocks.aleo.org/phase2";
 
     fn check_load_blocks(start: u32, end: Option<u32>, expected: usize) {
         let blocks = Arc::new(RwLock::new(Vec::new()));
@@ -433,7 +438,7 @@ mod tests {
     fn test_cdn_height() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let height = cdn_height::<BLOCKS_PER_FILE>(TEST_BASE_URL).await.unwrap();
+            let height = cdn_height::<BLOCKS_PER_FILE>().await.unwrap();
             assert!(height > 0);
         });
     }
